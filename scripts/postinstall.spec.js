@@ -53,7 +53,11 @@ function makeRoot({
   baileysNewsletterPatcher = false,
 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openwa-postinstall-'));
-  if (dashboard) fs.mkdirSync(path.join(root, 'dashboard'));
+  if (dashboard) {
+    // A real dashboard checkout: the install step keys on its package.json (see planSteps).
+    fs.mkdirSync(path.join(root, 'dashboard'));
+    fs.writeFileSync(path.join(root, 'dashboard', 'package.json'), '{}');
+  }
   if (
     patchers.length ||
     patcher ||
@@ -116,6 +120,15 @@ test('planSteps: dashboard only plans the dashboard install (shell, inherited st
   assert.equal(steps[0].options.shell, true);
   assert.equal(steps[0].options.stdio, 'inherit');
   assert.equal(steps[0].options.cwd, path.join(root, 'dashboard'));
+});
+
+test('planSteps: a prebuilt dashboard/dist without the dashboard package.json plans no dashboard install', () => {
+  const root = makeRoot();
+  fs.mkdirSync(path.join(root, 'dashboard', 'dist'), { recursive: true });
+  assert.equal(
+    planSteps(root).some(step => step.command === 'npm ci'),
+    false,
+  );
 });
 
 test('planSteps: patcher only plans the best-effort backport via the current node', () => {

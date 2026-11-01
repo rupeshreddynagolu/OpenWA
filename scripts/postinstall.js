@@ -78,7 +78,9 @@ function sanitizeEnv(env = process.env) {
 function planSteps(root, env = process.env) {
   const cleanEnv = sanitizeEnv(env);
   const steps = [];
-  if (fs.existsSync(path.join(root, 'dashboard'))) {
+  // The dashboard's own package.json, not just the directory: a prebuilt deployment bundle (cPanel, fork) ships
+  // dashboard/dist alone, and `npm ci` there would fail with nothing to install.
+  if (fs.existsSync(path.join(root, 'dashboard', 'package.json'))) {
     steps.push({
       name: 'dashboard dependencies (npm ci)',
       command: 'npm ci',
