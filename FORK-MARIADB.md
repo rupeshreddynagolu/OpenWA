@@ -19,7 +19,9 @@ This fork adds MariaDB as a third data database and Sidequest as a Redis-free du
 
 - `src/database/mariadb-connection.ts`: every pooled connection gets `ANSI_QUOTES,PIPES_AS_CONCAT`, so the raw SQL
   written for Postgres/SQLite (`"col"`, `||`) runs unchanged; uuid ids stay `varchar(36)` (`useVarcharUuids`).
-- `src/database/mariadb-boot-migrations.ts`: boot migrations run under `GET_LOCK('openwa_boot_migrations')`.
+- `src/database/mariadb-boot-migrations.ts`: boot migrations run while holding a row lock in `openwa_boot_lock`, a
+  table in OpenWA's own database (not `GET_LOCK`, whose names are server-wide and could be held by another account
+  on shared hosting).
 - `src/database/migrations-mariadb/`: a single baseline of the 0.27.0 schema. TEXT columns are `LONGTEXT` (MariaDB
   TEXT holds only 64 KB) and `messages.body` carries the FULLTEXT index search uses.
 - `src/modules/queue/sidequest/`: Sidequest runs inline in the app process and calls the existing BullMQ processors
@@ -42,3 +44,5 @@ This fork adds MariaDB as a third data database and Sidequest as a Redis-free du
 - Queue counts report jobs waiting for a later time as `wait`, never `delayed`.
 - Dashboard data export/import has not been exercised on MariaDB.
 - Bull Board (`/api/admin/queues`) is not mounted in Sidequest mode.
+- With `DATABASE_SSL=true` both the data connection and the Sidequest queue connection use TLS, verifying the server
+  unless `DATABASE_SSL_REJECT_UNAUTHORIZED=false`.

@@ -50,14 +50,34 @@ function createReady(): Ready {
   return { promise, resolve, reject };
 }
 
-/** Sidequest's MySQL-backend URL for the MariaDB data database. */
-export function sidequestBackendUrl(config: ConfigService): string {
-  const user = encodeURIComponent(config.get<string>('dataDatabase.username') ?? '');
-  const password = encodeURIComponent(config.get<string>('dataDatabase.password') ?? '');
-  const host = config.get<string>('dataDatabase.host') ?? 'localhost';
-  const port = config.get<number>('dataDatabase.port') ?? 3306;
-  const database = encodeURIComponent(config.get<string>('dataDatabase.name') ?? 'openwa');
-  return `mysql://${user}:${password}@${host}:${port}/${database}`;
+/**
+ * Sidequest's MySQL-backend (Knex) config for the MariaDB data database. A connection object rather than a URL, so it
+ * carries the same TLS settings as the data connection (mariadbConnectionOptions): with DATABASE_SSL=true the queue's
+ * connection is encrypted too, and verifies the server unless DATABASE_SSL_REJECT_UNAUTHORIZED=false.
+ */
+export function sidequestBackendConfig(config: ConfigService): {
+  connection: {
+    host: string;
+    port: number;
+    user: string;
+    password: string;
+    database: string;
+    charset: string;
+    ssl?: { rejectUnauthorized: boolean };
+  };
+} {
+  const ssl = config.get<boolean>('dataDatabase.ssl', false);
+  return {
+    connection: {
+      host: config.get<string>('dataDatabase.host') ?? 'localhost',
+      port: config.get<number>('dataDatabase.port') ?? 3306,
+      user: config.get<string>('dataDatabase.username') ?? '',
+      password: config.get<string>('dataDatabase.password') ?? '',
+      database: config.get<string>('dataDatabase.name') ?? 'openwa',
+      charset: 'utf8mb4',
+      ...(ssl ? { ssl: { rejectUnauthorized: config.get<boolean>('dataDatabase.sslRejectUnauthorized', true) } } : {}),
+    },
+  };
 }
 
 /**
@@ -78,7 +98,7 @@ class SidequestLifecycle implements OnApplicationBootstrap, OnModuleDestroy {
     registerQueueProcessor(QUEUE_NAMES.INGRESS, this.ingressProcessor);
     try {
       await Sidequest.start({
-        backend: { driver: '@sidequest/mysql-backend', config: sidequestBackendUrl(this.config) },
+        backend: { driver: '@sidequest/mysql-backend', config: sidequestBackendConfig(this.config) },
         queues: [
           { name: QUEUE_NAMES.WEBHOOK, concurrency: webhookWorkerConcurrency() },
           { name: QUEUE_NAMES.INGRESS, concurrency: ingressWorkerConcurrency() },

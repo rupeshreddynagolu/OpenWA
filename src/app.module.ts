@@ -219,7 +219,7 @@ if (dashboardServingEnabled && dashboardBuildPresent) {
 
         if (dbType === 'mariadb') {
           // Fork addition. Its own migration chain (a baseline of the current schema); createBootDataSource runs it
-          // under a GET_LOCK so two starts cannot apply it twice. Every connection gets ANSI_QUOTES and
+          // under a row lock in its own database so two starts cannot apply it twice. Every connection gets ANSI_QUOTES and
           // PIPES_AS_CONCAT (mariadb-connection.ts) so the raw SQL written for Postgres/SQLite reads the same here.
           return {
             ...baseConfig,
