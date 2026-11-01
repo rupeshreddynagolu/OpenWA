@@ -3,6 +3,7 @@ import * as path from 'path';
 import { loadCliEnv } from './load-cli-env';
 import { postgresUtcExtra } from './postgres-utc';
 import { postgresSchemaError, sqliteDataMainPathCollision } from '../config/env.validation';
+import { mariadbConnectionOptions, useVarcharUuids } from './mariadb-connection';
 
 // Load env with the same precedence as the app (process.env > .env > data/.env.generated), so the
 // migration CLI targets the SAME database the dashboard configured — not the default SQLite DB.
@@ -14,8 +15,8 @@ loadCliEnv();
 // comparison below and migrate a SQLite file named after the database. It runs after loadCliEnv, so
 // both sources reach it.
 const rawDbType = process.env.DATABASE_TYPE;
-if (rawDbType?.trim() && rawDbType !== 'sqlite' && rawDbType !== 'postgres') {
-  throw new Error(`DATABASE_TYPE must be "sqlite" or "postgres" (got ${JSON.stringify(rawDbType)})`);
+if (rawDbType?.trim() && rawDbType !== 'sqlite' && rawDbType !== 'postgres' && rawDbType !== 'mariadb') {
+  throw new Error(`DATABASE_TYPE must be "sqlite", "postgres" or "mariadb" (got ${JSON.stringify(rawDbType)})`);
 }
 
 // The other boot guard that matters for a DDL-issuing connection is re-applied explicitly:
@@ -118,5 +119,39 @@ export function buildPostgresDataSourceOptions(env: NodeJS.ProcessEnv = process.
 
 export const postgresDataSourceOptions: DataSourceOptions = buildPostgresDataSourceOptions();
 
+// MariaDB (fork addition): its own migration chain, a baseline of the current schema, rather than a third
+// dialect branch in every historical migration.
+export const mariadbDataMigrations = [sourceGlob('migrations-mariadb', '*{.ts,.js}')];
+
+export function buildMariadbDataSourceOptions(env: NodeJS.ProcessEnv = process.env): DataSourceOptions {
+  return {
+    ...mariadbConnectionOptions({
+      host: env.DATABASE_HOST,
+      port: parseInt(env.DATABASE_PORT || '3306', 10),
+      username: env.DATABASE_USERNAME,
+      password: env.DATABASE_PASSWORD,
+      database: env.DATABASE_NAME || 'openwa',
+      poolSize: parseInt(env.DATABASE_POOL_SIZE || '10', 10),
+      logging: env.DATABASE_LOGGING === 'true',
+      connectTimeoutMs: parseInt(env.DATABASE_CONNECTION_TIMEOUT_MS || '10000', 10),
+      ssl: env.DATABASE_SSL === 'true',
+      sslRejectUnauthorized: env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false',
+    }),
+    entities: dataEntities,
+    migrations: mariadbDataMigrations,
+  };
+}
+
+/** The CLI's MariaDB DataSource keeps uuid ids as varchar, as the runtime connection does (useVarcharUuids). */
+class MariadbCliDataSource extends DataSource {
+  override async initialize(): Promise<this> {
+    await super.initialize();
+    useVarcharUuids(this);
+    return this;
+  }
+}
+
 // Exactly ONE DataSource instance is exported (the default), selected by DATABASE_TYPE.
-export default new DataSource(dbType === 'postgres' ? postgresDataSourceOptions : sqliteDataSourceOptions);
+export default dbType === 'mariadb'
+  ? new MariadbCliDataSource(buildMariadbDataSourceOptions())
+  : new DataSource(dbType === 'postgres' ? postgresDataSourceOptions : sqliteDataSourceOptions);

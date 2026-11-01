@@ -472,14 +472,29 @@ export class LidMappingStoreService implements LidMappingStore, OnModuleInit, On
           .insert()
           .values({ lid, phone, sessionId: sessionId ?? null, isReported: true, updatedAt: new Date() })
           .getQueryAndParameters();
-        await this.repo.query(
-          insert +
-            ` ON CONFLICT ("lid") DO UPDATE SET "phone" = EXCLUDED."phone", "isReported" = true, ` +
-            `"sessionId" = CASE WHEN ${changed} THEN EXCLUDED."sessionId" ELSE "lid_mappings"."sessionId" END, ` +
-            `"updatedAt" = CASE WHEN ${changed} THEN EXCLUDED."updatedAt" ELSE "lid_mappings"."updatedAt" END ` +
-            `WHERE ${changed} OR "lid_mappings"."isReported" = false`,
-          parameters,
-        );
+        if (this.repo.manager?.connection?.options?.type === 'mariadb') {
+          // Fork addition. MariaDB's ON DUPLICATE KEY UPDATE has no WHERE, so the condition moves into each
+          // assignment. Assignments apply left to right and see the values set before them, so the two that test
+          // the old phone come first. The skipped case of the WHERE (same phone, already reported) leaves every
+          // column as it was here too: phone and isReported are rewritten with the values they already hold.
+          const mariadbChanged = '("phone" IS NULL OR "phone" <> VALUES("phone"))';
+          await this.repo.query(
+            insert +
+              ` ON DUPLICATE KEY UPDATE "sessionId" = IF(${mariadbChanged}, VALUES("sessionId"), "sessionId"), ` +
+              `"updatedAt" = IF(${mariadbChanged}, VALUES("updatedAt"), "updatedAt"), ` +
+              `"isReported" = true, "phone" = VALUES("phone")`,
+            parameters,
+          );
+        } else {
+          await this.repo.query(
+            insert +
+              ` ON CONFLICT ("lid") DO UPDATE SET "phone" = EXCLUDED."phone", "isReported" = true, ` +
+              `"sessionId" = CASE WHEN ${changed} THEN EXCLUDED."sessionId" ELSE "lid_mappings"."sessionId" END, ` +
+              `"updatedAt" = CASE WHEN ${changed} THEN EXCLUDED."updatedAt" ELSE "lid_mappings"."updatedAt" END ` +
+              `WHERE ${changed} OR "lid_mappings"."isReported" = false`,
+            parameters,
+          );
+        }
       } else if (phone === null) await this.clear(lid, sessionId ?? null, seen, report);
       else {
         await this.repo.upsert({ lid, phone, sessionId: sessionId ?? null, isReported: true, updatedAt: new Date() }, [

@@ -1,4 +1,5 @@
 import { Client, ClientConfig } from 'pg';
+import { createMariadbBootDataSource } from './mariadb-boot-migrations';
 import { DataSource, DataSourceOptions } from 'typeorm';
 import { createLogger } from '../common/services/logger.service';
 import { assertDataConnectionUtc, postgresUtcExtra } from './postgres-utc';
@@ -80,6 +81,11 @@ export async function createBootDataSource(
       if (dataSource.isInitialized) await dataSource.destroy().catch(() => undefined);
       throw error;
     }
+  }
+
+  if (options?.type === 'mariadb') {
+    // Fork addition: the MariaDB chain runs under a GET_LOCK (mariadb-boot-migrations.ts).
+    return createMariadbBootDataSource(options, createDataSource);
   }
 
   if (options?.type !== 'postgres') {

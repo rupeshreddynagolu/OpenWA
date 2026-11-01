@@ -139,18 +139,24 @@ export class WebhookRedriveService implements OnModuleDestroy {
     const cutoff = new Date(Date.now() - retentionHours * 60 * 60 * 1000);
     // Join eligible subscriptions before taking a batch. A single membership predicate also avoids
     // an OR expression and repeated ids parameters for every active webhook across all sessions.
+    const dialect = this.failureRepository.manager.connection.options.type;
     const subscriptions =
-      this.failureRepository.manager.connection.options.type === 'postgres'
+      dialect === 'postgres'
         ? "json_array_elements_text(CASE WHEN json_typeof(webhook.events::json) = 'array' THEN webhook.events::json ELSE '[]'::json END) AS subscribed(event)"
-        : "json_each(CASE WHEN json_type(webhook.events) = 'array' THEN webhook.events ELSE '[]' END) AS subscribed";
-    const subscribedEvent =
-      this.failureRepository.manager.connection.options.type === 'postgres' ? 'subscribed.event' : 'subscribed.value';
+        : dialect === 'mariadb'
+          ? // Fork addition: MariaDB's lateral JSON_TABLE over the stored JSON array.
+            "JSON_TABLE(CASE WHEN JSON_VALID(webhook.events) AND JSON_TYPE(webhook.events) = 'ARRAY' THEN webhook.events ELSE '[]' END, '$[*]' COLUMNS (event VARCHAR(255) PATH '$')) AS subscribed"
+          : "json_each(CASE WHEN json_type(webhook.events) = 'array' THEN webhook.events ELSE '[]' END) AS subscribed";
+    const subscribedEvent = dialect === 'postgres' || dialect === 'mariadb' ? 'subscribed.event' : 'subscribed.value';
+    // MariaDB spells the text cast CHAR; its ids are varchar already.
+    const asText = (expr: string): string =>
+      dialect === 'mariadb' ? `CAST(${expr} AS CHAR)` : `CAST(${expr} AS text)`;
     const query = this.failureRepository
       .createQueryBuilder('failure')
       .innerJoin(
         Webhook,
         'webhook',
-        'CAST(webhook.id AS text) = failure.webhookId AND CAST(webhook.sessionId AS text) = failure.sessionId',
+        `${asText('webhook.id')} = failure.webhookId AND ${asText('webhook.sessionId')} = failure.sessionId`,
       )
       .where({
         attempts: MoreThan(0),

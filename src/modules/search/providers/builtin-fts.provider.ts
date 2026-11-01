@@ -70,7 +70,11 @@ export const TRIGRAM_BUILD_LOCK = `$1, to_regclass('messages')::oid::int`;
 const TRIGRAM_BUILD_RETRY_MS = 30_000;
 
 /** Why match=contains answers 501, one message per cause, each naming what to change. */
+/** FULLTEXT index on messages.body that match=word queries on MariaDB (created by the migrations-mariadb baseline). */
+export const MARIADB_FULLTEXT_INDEX = 'IDX_messages_body_fulltext';
+
 const CONTAINS_UNAVAILABLE = {
+  mariadb: 'Contains search is not available on MariaDB (fork): use match=word, which the FULLTEXT index answers.',
   disabled: 'Contains search is disabled: set SEARCH_CONTAINS_ENABLED=true and restart to build its index.',
   building:
     'Contains search is not ready: its index is still being built (SEARCH_CONTAINS_ENABLED=true). Retry shortly.',
@@ -297,6 +301,23 @@ export class BuiltInFtsProvider implements SearchProvider, OnModuleInit, OnAppli
    */
   private async probeFts(): Promise<boolean> {
     if (this.ftsAvailable !== null) return this.ftsAvailable;
+    if (this.dataSource.options.type === 'mariadb') {
+      // Fork addition: the FULLTEXT index on messages.body (migrations-mariadb baseline). Fail closed and uncached on a
+      // probe error, as the Postgres branch does.
+      try {
+        const rows: unknown[] = await this.dataSource.query(
+          `SELECT 1 FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'messages' AND INDEX_NAME = ? LIMIT 1`,
+          [MARIADB_FULLTEXT_INDEX],
+        );
+        this.ftsAvailable = Array.isArray(rows) && rows.length === 1;
+      } catch (e) {
+        this.logger.warn(
+          `FTS probe failed; treating the index as unavailable: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return false;
+      }
+      return this.ftsAvailable;
+    }
     if (this.dataSource.options.type === 'postgres') {
       // to_regclass('messages') resolves the name through the session search_path — the identical
       // resolution the runtime queries (`FROM messages m`) use, and the data connection pins
@@ -357,6 +378,7 @@ export class BuiltInFtsProvider implements SearchProvider, OnModuleInit, OnAppli
    * behind — the route 501s cleanly via ensureFts).
    */
   private async ensureFtsSchema(): Promise<boolean> {
+    if (this.dataSource.options.type === 'mariadb') return this.probeFts();
     const isPostgres = this.dataSource.options.type === 'postgres';
     if (isPostgres) {
       // Uncached on purpose (probeFts caches and swallows errors). Both objects are looked up on the
@@ -516,6 +538,11 @@ export class BuiltInFtsProvider implements SearchProvider, OnModuleInit, OnAppli
    */
   async buildContainsIndex(): Promise<void> {
     if (!this.containsEnabled) return;
+    if (this.dataSource.options.type === 'mariadb') {
+      this.containsUnavailable = CONTAINS_UNAVAILABLE.mariadb;
+      this.logger.warn(this.containsUnavailable);
+      return;
+    }
     const start = Date.now();
     try {
       this.containsUnavailable =
@@ -667,6 +694,7 @@ export class BuiltInFtsProvider implements SearchProvider, OnModuleInit, OnAppli
 
   /** Guards a match=contains search: disabled, still building or unbuildable is a 501 that says which. */
   private async ensureContains(): Promise<void> {
+    if (this.dataSource.options.type === 'mariadb') throw new NotImplementedException(CONTAINS_UNAVAILABLE.mariadb);
     if (this.containsUnavailable && this.containsEnabled && this.dataSource.options.type === 'postgres') {
       await this.probePostgresTrigram();
     }
@@ -676,6 +704,7 @@ export class BuiltInFtsProvider implements SearchProvider, OnModuleInit, OnAppli
   async search(query: SearchQuery): Promise<SearchResults> {
     if (query.match === 'contains') return this.searchContains(query);
     await this.ensureFts();
+    if (this.dataSource.options.type === 'mariadb') return this.searchMariadb(query);
     const start = Date.now();
     const isPostgres = this.dataSource.options.type === 'postgres';
     const limit = Math.max(1, Math.min(query.limit ?? 50, SEARCH_LIMIT_MAX));
@@ -838,6 +867,54 @@ export class BuiltInFtsProvider implements SearchProvider, OnModuleInit, OnAppli
       );
     }
     return terms;
+  }
+
+  // --- MariaDB FULLTEXT (fork addition) ----------------------------------------
+  // InnoDB FULLTEXT in BOOLEAN MODE: every term required (+) and quoted, so user input matches literally, as the
+  // SQLite branch quotes its tokens. MariaDB has no snippet function, so the snippet is cut from the body in the
+  // application, as match=contains does. The relevance value is withheld from a scoped caller, as on SQLite, since
+  // it weighs terms across the whole table; it still orders the hits. Note InnoDB ignores terms shorter than
+  // innodb_ft_min_token_size (3 by default) and its stopword list.
+  static toMariadbBooleanQuery(raw: string): string {
+    const tokens = [...new Set(raw.trim().split(/\s+/))].map(tok => tok.replace(/"/g, '')).filter(Boolean);
+    return tokens.map(tok => `+"${tok}"`).join(' ');
+  }
+
+  private async searchMariadb(q: SearchQuery): Promise<SearchResults> {
+    const start = Date.now();
+    const limit = Math.max(1, Math.min(q.limit ?? 50, SEARCH_LIMIT_MAX));
+    const offset = Math.max(0, q.offset ?? 0);
+    const against = BuiltInFtsProvider.toMariadbBooleanQuery(q.q);
+    if (!against) return { hits: [], total: 0, tookMs: Date.now() - start, provider: this.id };
+    const ph = BuiltInFtsProvider.sqlitePlaceholder;
+    const match = `MATCH(m."body") AGAINST (${ph()} IN BOOLEAN MODE)`;
+    const where = [match];
+    const filterParams: unknown[] = [];
+    this.applyFilters(where, filterParams, q, 'm.', ph);
+    const scoped = q.chatIds !== undefined || (q.sessionIds?.length ?? 0) > 0;
+    const cols = `m."id", m."waMessageId" AS wa_message_id, m."sessionId" AS session_id, m."chatId" AS chat_id, m."from" AS "from", m."body", m."timestamp", m."type", m."direction", ${match} AS relevance`;
+    const sql = `SELECT ${cols} FROM messages m WHERE ${where.join(' AND ')} ORDER BY relevance DESC, m."timestamp" DESC, m."id" DESC LIMIT ${ph()} OFFSET ${ph()}`;
+    const rows = await this.dataSource.query<Array<FtsResultRow & { relevance: number | null }>>(sql, [
+      against,
+      against,
+      ...filterParams,
+      limit,
+      offset,
+    ]);
+    const terms = against.split(' ').map(tok => tok.slice(2, -1));
+    const hits: SearchHit[] = rows.map(row => ({
+      ...this.mapRow({ ...row, score: scoped ? null : row.relevance }),
+      snippet: containsSnippet(row.body ?? '', terms, MAX_SNIPPET_WORDS),
+    }));
+    let total = rows.length;
+    if (!(rows.length < limit && offset === 0)) {
+      const counted = await this.dataSource.query<CountRow[]>(
+        `SELECT count(*) AS n FROM messages m WHERE ${where.join(' AND ')}`,
+        [against, ...filterParams],
+      );
+      total = Number(counted[0]?.n ?? 0);
+    }
+    return { hits, total, tookMs: Date.now() - start, provider: this.id };
   }
 
   // --- SQLite FTS5 -----------------------------------------------------------

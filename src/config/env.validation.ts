@@ -145,8 +145,34 @@ export function validateEnv(config: EnvConfig): EnvConfig {
   };
 
   const dbType = rawEnum('DATABASE_TYPE');
-  if (dbType && dbType !== 'sqlite' && dbType !== 'postgres') {
-    errors.push(`DATABASE_TYPE must be "sqlite" or "postgres" (got ${JSON.stringify(dbType)})`);
+  if (dbType && dbType !== 'sqlite' && dbType !== 'postgres' && dbType !== 'mariadb') {
+    errors.push(`DATABASE_TYPE must be "sqlite", "postgres" or "mariadb" (got ${JSON.stringify(dbType)})`);
+  }
+
+  // MariaDB (fork addition): a server database like Postgres, managed only by its own migration chain
+  // (src/database/migrations-mariadb). synchronize would rebuild the schema from entities and drop what the
+  // migrations add on top of them (the messages FULLTEXT index search depends on), so it is refused here.
+  if (dbType === 'mariadb') {
+    for (const key of ['DATABASE_HOST', 'DATABASE_USERNAME', 'DATABASE_PASSWORD']) {
+      if (!str(key)) {
+        errors.push(`${key} is required when DATABASE_TYPE=mariadb`);
+      }
+    }
+    if (config['DATABASE_SYNCHRONIZE'] === 'true') {
+      errors.push(
+        'DATABASE_SYNCHRONIZE=true is not allowed with DATABASE_TYPE=mariadb: the MariaDB schema is managed by its migrations. Set DATABASE_SYNCHRONIZE=false.',
+      );
+    }
+  }
+
+  // QUEUE_DRIVER (fork addition): which durable queue backs QUEUE_ENABLED=true. 'bullmq' (default) needs
+  // Redis; 'sidequest' stores jobs in the MariaDB data database instead, so it needs DATABASE_TYPE=mariadb.
+  const queueDriver = rawEnum('QUEUE_DRIVER');
+  if (queueDriver !== undefined && queueDriver !== 'bullmq' && queueDriver !== 'sidequest') {
+    errors.push(`QUEUE_DRIVER must be "bullmq" or "sidequest" (got ${JSON.stringify(queueDriver)})`);
+  }
+  if (queueDriver === 'sidequest' && dbType !== 'mariadb') {
+    errors.push('QUEUE_DRIVER=sidequest stores its jobs in MariaDB and needs DATABASE_TYPE=mariadb');
   }
 
   // Whitelist the registered engine/storage ids so a typo fails fast at boot: an unknown ENGINE_TYPE
@@ -248,7 +274,8 @@ export function validateEnv(config: EnvConfig): EnvConfig {
           'which runs without TLS: set DATABASE_SSL=false where it is set (data/.env.generated, the project .env or the environment)',
       );
     }
-  } else {
+  } else if (dbType !== 'mariadb') {
+    // (Fork: MariaDB, like Postgres, takes a bare database name and is checked above.)
     // SQLite (explicit or default): DATABASE_NAME is a file path for the 'data' connection. It must
     // not resolve to the 'main' DB file — two TypeORM connections on one SQLite file run separate
     // migration ledgers + synchronize policies against the same tables, risking schema divergence and

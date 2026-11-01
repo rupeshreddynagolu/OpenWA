@@ -17,7 +17,7 @@ import { EngineModule } from '../../engine/engine.module';
 const queueModules: Array<Type | DynamicModule> = [];
 if (process.env.QUEUE_ENABLED === 'true') {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const queueModule = require('../queue/queue.module') as {
+  const queueModule = require('../queue/active-queue.module') as {
     QueueModule: Type;
   };
   queueModules.push(queueModule.QueueModule);

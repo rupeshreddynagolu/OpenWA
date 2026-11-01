@@ -213,7 +213,9 @@ export class MessageService implements PluginMessagePort {
    * and a same-second group keeps its uuid order there.
    */
   private get orderTiebreak(): 'rowid' | 'id' {
-    return this.messageRepository.manager?.connection?.options?.type === 'postgres' ? 'id' : 'rowid';
+    // MariaDB (fork) has no rowid either, so it keeps `id` as PostgreSQL does.
+    const type = this.messageRepository.manager?.connection?.options?.type;
+    return type === 'postgres' || type === 'mariadb' ? 'id' : 'rowid';
   }
 
   /**

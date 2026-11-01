@@ -165,6 +165,8 @@ export default () => ({
   // Queue configuration
   queue: {
     enabled: process.env.QUEUE_ENABLED === 'true',
+    // Fork addition: 'bullmq' (Redis) or 'sidequest' (jobs stored in the MariaDB data database).
+    driver: process.env.QUEUE_DRIVER === 'sidequest' ? 'sidequest' : 'bullmq',
   },
 
   // Cache configuration
@@ -204,7 +206,7 @@ export default () => ({
     schema: process.env.POSTGRES_SCHEMA || 'public',
     // PostgreSQL/MySQL connection (used when type is postgres/mysql)
     host: process.env.DATABASE_HOST || 'localhost',
-    port: parseInt(process.env.DATABASE_PORT || '5432', 10),
+    port: parseInt(process.env.DATABASE_PORT || (process.env.DATABASE_TYPE === 'mariadb' ? '3306' : '5432'), 10),
     username: process.env.DATABASE_USERNAME,
     password: process.env.DATABASE_PASSWORD,
     synchronize: process.env.DATABASE_SYNCHRONIZE === 'true',

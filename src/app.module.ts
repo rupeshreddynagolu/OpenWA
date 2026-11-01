@@ -11,6 +11,7 @@ import configuration from './config/configuration';
 import { validateEnv } from './config/env.validation';
 import { createBootDataSource } from './database/pg-boot-migrations';
 import { createMainDataSource, mainConnectionOptions, SQLITE_BUSY_TIMEOUT_MS } from './database/main-connection';
+import { mariadbConnectionOptions } from './database/mariadb-connection';
 import { SessionModule } from './modules/session/session.module';
 import { MessageModule } from './modules/message/message.module';
 import { TemplateModule } from './modules/template/template.module';
@@ -52,7 +53,7 @@ import { SqlitePermissionsBoot } from './database/sqlite-file-permissions';
 const queueModules: Array<Type | DynamicModule> = [];
 if (process.env.QUEUE_ENABLED === 'true') {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const queueModule = require('./modules/queue/queue.module') as {
+  const queueModule = require('./modules/queue/active-queue.module') as {
     QueueModule: Type;
   };
   queueModules.push(queueModule.QueueModule);
@@ -147,7 +148,7 @@ if (dashboardServingEnabled && dashboardBuildPresent) {
       // failures before the schema sync, and other sqlite options keep the library's default path.
       dataSourceFactory: createBootDataSource,
       useFactory: (configService: ConfigService) => {
-        const dbType = configService.get<'sqlite' | 'postgres'>('dataDatabase.type', 'sqlite');
+        const dbType = configService.get<'sqlite' | 'postgres' | 'mariadb'>('dataDatabase.type', 'sqlite');
         const baseConfig = {
           entities: [
             __dirname + '/modules/session/**/*.entity{.ts,.js}',
@@ -213,6 +214,32 @@ if (dashboardServingEnabled && dashboardBuildPresent) {
               // path so pg_catalog + any public helpers still resolve; the configured schema wins.
               ...(useCustomSearchPath ? { options: `-c search_path=${schema},public` } : {}),
             },
+          };
+        }
+
+        if (dbType === 'mariadb') {
+          // Fork addition. Its own migration chain (a baseline of the current schema); createBootDataSource runs it
+          // under a GET_LOCK so two starts cannot apply it twice. Every connection gets ANSI_QUOTES and
+          // PIPES_AS_CONCAT (mariadb-connection.ts) so the raw SQL written for Postgres/SQLite reads the same here.
+          return {
+            ...baseConfig,
+            ...mariadbConnectionOptions({
+              host: configService.get<string>('dataDatabase.host'),
+              port: configService.get<number>('dataDatabase.port'),
+              username: configService.get<string>('dataDatabase.username'),
+              password: configService.get<string>('dataDatabase.password'),
+              database: configService.get<string>('dataDatabase.name', 'openwa'),
+              poolSize: configService.get<number>('dataDatabase.poolSize', 10),
+              logging: configService.get<boolean>('dataDatabase.logging', false),
+              connectTimeoutMs: configService.get<number>('dataDatabase.connectionTimeoutMs', 10000),
+              ssl: configService.get<boolean>('dataDatabase.ssl', false),
+              sslRejectUnauthorized: configService.get<boolean>('dataDatabase.sslRejectUnauthorized', true),
+            }),
+            name: 'data',
+            migrations: [__dirname + '/database/migrations-mariadb/*{.ts,.js}'],
+            migrationsRun: true,
+            retryAttempts: 10,
+            retryDelay: 3000,
           };
         }
 

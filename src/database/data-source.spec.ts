@@ -69,7 +69,7 @@ describe('data CLI DataSource', () => {
       expect(() => {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         require('./data-source');
-      }).toThrow(`DATABASE_TYPE must be "sqlite" or "postgres" (got ${JSON.stringify(value)})`);
+      }).toThrow(`DATABASE_TYPE must be "sqlite", "postgres" or "mariadb" (got ${JSON.stringify(value)})`);
     } finally {
       if (prevType !== undefined) process.env.DATABASE_TYPE = prevType;
       else delete process.env.DATABASE_TYPE;

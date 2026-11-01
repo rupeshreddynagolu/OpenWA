@@ -51,7 +51,8 @@ export class SqlitePermissionsBoot implements OnApplicationBootstrap {
 
   onApplicationBootstrap(): void {
     const paths: string[] = [this.config.get<string>('database.database', './data/main.sqlite')];
-    if (this.config.get<string>('dataDatabase.type', 'sqlite') !== 'postgres') {
+    const dataType = this.config.get<string>('dataDatabase.type', 'sqlite');
+    if (dataType !== 'postgres' && dataType !== 'mariadb') {
       paths.push(this.config.get<string>('dataDatabase.database', './data/openwa.sqlite'));
     }
     tightenSqliteFilePermissions(paths, message => this.logger.warn(message));

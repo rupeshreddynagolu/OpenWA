@@ -13,6 +13,10 @@ import { Message, MessageDirection, MessageStatus } from '../message/entities/me
  * GROUP BY/ORDER BY on the alias and the downstream map() are unchanged.
  */
 export function timeSeriesTimestampSql(dbType: string, interval: 'hour' | 'day'): string {
+  if (dbType === 'mariadb') {
+    // Fork addition: DATE_FORMAT gives the same zero-padded labels as to_char/strftime.
+    return `DATE_FORMAT(m."createdAt", '${interval === 'hour' ? '%Y-%m-%d %H:00:00' : '%Y-%m-%d'}')`;
+  }
   if (dbType === 'postgres') {
     const fmt = interval === 'hour' ? 'YYYY-MM-DD HH24:00:00' : 'YYYY-MM-DD';
     return `to_char(m."createdAt", '${fmt}')`;
@@ -23,6 +27,7 @@ export function timeSeriesTimestampSql(dbType: string, interval: 'hour' | 'day')
 
 /** SQL for the integer hour-of-day (0-23) bucket, per DB dialect. */
 export function hourBucketSql(dbType: string): string {
+  if (dbType === 'mariadb') return `HOUR(m."createdAt")`;
   return dbType === 'postgres'
     ? `CAST(EXTRACT(HOUR FROM m."createdAt") AS INTEGER)`
     : `CAST(strftime('%H', m.createdAt) AS INTEGER)`;
@@ -36,6 +41,7 @@ export function hourBucketSql(dbType: string): string {
  * field is stable regardless of the backing database.
  */
 export function maxCreatedAtSql(dbType: string): string {
+  if (dbType === 'mariadb') return `DATE_FORMAT(MAX(m."createdAt"), '%Y-%m-%d %H:%i:%s')`;
   return dbType === 'postgres'
     ? `to_char(MAX(m."createdAt"), 'YYYY-MM-DD HH24:MI:SS')`
     : `strftime('%Y-%m-%d %H:%M:%S', MAX(m.createdAt))`;
@@ -112,7 +118,7 @@ export class StatsService {
     private readonly configService: ConfigService,
   ) {}
 
-  /** The data-connection dialect ('sqlite' | 'postgres'), used to pick portable date SQL. */
+  /** The data-connection dialect ('better-sqlite3' | 'postgres' | 'mariadb'), used to pick portable date SQL. */
   private get dataDbType(): string {
     return this.messageRepo.manager.dataSource.options.type;
   }
@@ -290,7 +296,8 @@ export class StatsService {
   private async getTopChats(
     since: Date,
   ): Promise<Array<{ chatId: string; messageCount: string; chatName: string | null }>> {
-    if (this.dataDbType === 'postgres') {
+    // MariaDB (fork) takes the portable query-builder path; the CTE below is a SQLite-only planner workaround.
+    if (this.dataDbType === 'postgres' || this.dataDbType === 'mariadb') {
       return (
         this.messageRepo
           .createQueryBuilder('m')
