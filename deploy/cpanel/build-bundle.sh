@@ -36,23 +36,8 @@ cp deploy/cpanel/README.md "$OUT/DEPLOY-CPANEL.md"
 mkdir -p "$OUT/tools"
 cp deploy/cpanel/copy-sqlite-to-mariadb.cjs "$OUT/tools/"
 
-# Runtime-only package.json: same dependencies and overrides, no dev toolchain, just start + postinstall.
-node -e '
-  const pkg = require(process.argv[1]);
-  const out = {
-    name: pkg.name,
-    version: pkg.version,
-    description: pkg.description,
-    license: pkg.license,
-    private: true,
-    engines: pkg.engines,
-    main: "app.js",
-    scripts: { start: "node app.js", postinstall: "node scripts/postinstall.js" },
-    dependencies: pkg.dependencies,
-    overrides: pkg.overrides,
-  };
-  process.stdout.write(JSON.stringify(out, null, 2) + "\n");
-' "$ROOT/package.json" > "$OUT/package.json"
+# Runtime-only package.json (see make-package-json.cjs: start script and a CloudLinux-tolerant postinstall).
+node deploy/cpanel/make-package-json.cjs "$ROOT/package.json" > "$OUT/package.json"
 
 echo "==> Zipping"
 ( cd "$(dirname "$OUT")" && rm -f "$(basename "$OUT").zip" && zip -qr "$(basename "$OUT").zip" "$(basename "$OUT")" )

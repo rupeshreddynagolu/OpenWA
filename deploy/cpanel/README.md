@@ -95,9 +95,11 @@ npm install --omit=dev
 **Without SSH**, open the app in _Setup Node.js App_ and click **Run NPM Install**. If it times out or runs out of
 memory on a small plan, ask your host to run it, or use SSH.
 
-Either way, the install applies OpenWA's dependency patches (you will see lines like `patch-baileys-pairing: applied`)
-and skips the Chromium download (the bundle's `.puppeteerrc.cjs` turns it off). Then click **Restart** in _Setup
-Node.js App_.
+The install skips the Chromium download (the bundle's `.puppeteerrc.cjs` turns it off). OpenWA's dependency patches
+are applied at install time over SSH (lines like `patch-baileys-pairing: applied`). The panel's button installs into
+CloudLinux's own folder (`~/nodevenv/openwa/<version>/lib`), where it only prints `openwa: no scripts/ folder here …`;
+`app.js` then applies the same patches when the app first starts, so both ways end up patched. Then click **Restart**
+in _Setup Node.js App_.
 
 Check it: open `https://openwa.example.com/api/health`. It should answer `{"status":"ok",…}`.
 
@@ -170,17 +172,18 @@ Restoring both brings a session back without re-linking.
 
 ## 12. Troubleshooting
 
-| Symptom                                                        | Likely cause and fix                                                                                                      |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| _Setup Node.js App_ shows an error, or the site answers 503    | Read `stderr.log` in the application root (or the log path cPanel shows). Most start-up errors name the setting at fault. |
-| `Invalid environment configuration: …`                         | A value in `.env` is missing or misspelt; the message lists each one.                                                     |
-| `Access denied for user` / `ER_DBACCESS_DENIED_ERROR`          | Use the **prefixed** names (`myacct_…`) and check the user has ALL PRIVILEGES on the database (step 3).                   |
-| npm install is killed or times out                             | Not enough memory for the panel's installer. Use SSH (step 7) or ask the host.                                            |
-| A download of Chromium during install                          | `.puppeteerrc.cjs` is missing from the application root; it ships in the bundle (hidden files).                           |
-| The WhatsApp session drops every so often                      | Passenger stopped the idle app. Add the step 8 settings and the cron job.                                                 |
-| WhatsApp keeps logging the session out, or two QR codes appear | Two app processes are running. Limit Passenger to one instance (step 8a).                                                 |
-| Dashboard page is blank                                        | Open it over **https**. Production mode upgrades the page's requests to https.                                            |
-| Live updates in the dashboard are slow                         | The host's proxy blocks WebSockets; Socket.IO falls back to polling, which still works.                                   |
+| Symptom                                                               | Likely cause and fix                                                                                                                  |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| _Setup Node.js App_ shows an error, or the site answers 503           | Read `stderr.log` in the application root (or the log path cPanel shows). Most start-up errors name the setting at fault.             |
+| `Invalid environment configuration: …`                                | A value in `.env` is missing or misspelt; the message lists each one.                                                                 |
+| `Access denied for user` / `ER_DBACCESS_DENIED_ERROR`                 | Use the **prefixed** names (`myacct_…`) and check the user has ALL PRIVILEGES on the database (step 3).                               |
+| npm install is killed or times out                                    | Not enough memory for the panel's installer. Use SSH (step 7) or ask the host.                                                        |
+| `Cannot find module '…/nodevenv/openwa/…/lib/scripts/postinstall.js'` | A bundle built before 12 Nov 2026. Use a current bundle, or run `npm install --omit=dev` over SSH from the application root (step 7). |
+| A download of Chromium during install                                 | `.puppeteerrc.cjs` is missing from the application root; it ships in the bundle (hidden files).                                       |
+| The WhatsApp session drops every so often                             | Passenger stopped the idle app. Add the step 8 settings and the cron job.                                                             |
+| WhatsApp keeps logging the session out, or two QR codes appear        | Two app processes are running. Limit Passenger to one instance (step 8a).                                                             |
+| Dashboard page is blank                                               | Open it over **https**. Production mode upgrades the page's requests to https.                                                        |
+| Live updates in the dashboard are slow                                | The host's proxy blocks WebSockets; Socket.IO falls back to polling, which still works.                                               |
 
 ## Security checklist
 
