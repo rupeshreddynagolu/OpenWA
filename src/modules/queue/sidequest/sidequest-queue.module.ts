@@ -65,9 +65,17 @@ export function sidequestBackendConfig(config: ConfigService): {
     charset: string;
     ssl?: { rejectUnauthorized: boolean };
   };
+  pool: { afterCreate: (connection: SqlConnection, done: (error: unknown, connection: SqlConnection) => void) => void };
 } {
   const ssl = config.get<boolean>('dataDatabase.ssl', false);
   return {
+    // Sidequest claims jobs in a transaction with SELECT … FOR UPDATE SKIP LOCKED, which needs InnoDB, but its
+    // migrations name no engine, so its tables take the server default: MyISAM on some shared hosts, where neither
+    // transactions nor row locks exist and two runners could claim one job. Every connection defaults to InnoDB.
+    pool: {
+      afterCreate: (connection, done) =>
+        connection.query(SIDEQUEST_SESSION_ENGINE_STATEMENT, error => done(error, connection)),
+    },
     connection: {
       host: config.get<string>('dataDatabase.host') ?? 'localhost',
       port: config.get<number>('dataDatabase.port') ?? 3306,
@@ -78,6 +86,33 @@ export function sidequestBackendConfig(config: ConfigService): {
       ...(ssl ? { ssl: { rejectUnauthorized: config.get<boolean>('dataDatabase.sslRejectUnauthorized', true) } } : {}),
     },
   };
+}
+
+interface SqlConnection {
+  query(sql: string, callback: (error: unknown) => void): unknown;
+}
+
+export const SIDEQUEST_SESSION_ENGINE_STATEMENT = 'SET SESSION default_storage_engine = InnoDB';
+
+/**
+ * Convert Sidequest tables an earlier start created with another engine (the server default, MyISAM on some shared
+ * hosts) to InnoDB, so its claim transaction and row locks hold. Returns the tables converted. A failure is logged and
+ * leaves the queue to run as before rather than block start-up.
+ */
+export async function ensureSidequestTablesInnoDb(dataSource: Pick<DataSource, 'query'>): Promise<string[]> {
+  const rows = await dataSource.query<Array<{ name: string; engine: string | null }>>(
+    `SELECT TABLE_NAME AS name, ENGINE AS engine FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'sidequest\\_%' AND TABLE_TYPE = 'BASE TABLE'
+        AND (ENGINE IS NULL OR ENGINE <> 'InnoDB')`,
+  );
+  const converted: string[] = [];
+  for (const { name, engine } of rows) {
+    if (!/^sidequest_[a-z_]+$/.test(name)) continue;
+    await dataSource.query(`ALTER TABLE \`${name}\` ENGINE=InnoDB`);
+    logger.warn(`Converted ${name} from ${engine ?? 'an unknown engine'} to InnoDB (Sidequest needs transactions)`);
+    converted.push(name);
+  }
+  return converted;
 }
 
 /**
@@ -91,11 +126,18 @@ class SidequestLifecycle implements OnApplicationBootstrap, OnModuleDestroy {
     @Inject(SIDEQUEST_READY) private readonly ready: Ready,
     private readonly webhookProcessor: WebhookProcessor,
     private readonly ingressProcessor: IngressProcessor,
+    @Inject(getDataSourceToken('data')) private readonly dataSource: DataSource,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
     registerQueueProcessor(QUEUE_NAMES.WEBHOOK, this.webhookProcessor);
     registerQueueProcessor(QUEUE_NAMES.INGRESS, this.ingressProcessor);
+    // Tables an earlier start left on another engine; new ones are created InnoDB (sidequestBackendConfig pool hook).
+    await ensureSidequestTablesInnoDb(this.dataSource).catch((error: unknown) =>
+      logger.error(
+        `Could not convert Sidequest tables to InnoDB: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
     try {
       await Sidequest.start({
         backend: { driver: '@sidequest/mysql-backend', config: sidequestBackendConfig(this.config) },

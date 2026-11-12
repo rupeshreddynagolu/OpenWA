@@ -1,5 +1,9 @@
 import type { ConfigService } from '@nestjs/config';
-import { sidequestBackendConfig } from './sidequest-queue.module';
+import {
+  ensureSidequestTablesInnoDb,
+  SIDEQUEST_SESSION_ENGINE_STATEMENT,
+  sidequestBackendConfig,
+} from './sidequest-queue.module';
 
 describe('sidequestBackendConfig', () => {
   const config = (values: Record<string, unknown>) =>
@@ -40,5 +44,44 @@ describe('sidequestBackendConfig', () => {
 
   it('adds no TLS settings when DATABASE_SSL is off', () => {
     expect(sidequestBackendConfig(config(base)).connection).not.toHaveProperty('ssl');
+  });
+});
+
+describe('Sidequest tables on InnoDB', () => {
+  it('makes every Sidequest connection create its tables on InnoDB', () => {
+    const { pool } = sidequestBackendConfig({ get: (_k: string, fallback?: unknown) => fallback } as never);
+    const connection = { query: jest.fn((_sql: string, callback: (error: unknown) => void) => callback(null)) };
+    const done = jest.fn();
+    pool.afterCreate(connection, done);
+    expect(connection.query).toHaveBeenCalledWith(SIDEQUEST_SESSION_ENGINE_STATEMENT, expect.any(Function));
+    expect(SIDEQUEST_SESSION_ENGINE_STATEMENT).toMatch(/default_storage_engine\s*=\s*InnoDB/);
+    expect(done).toHaveBeenCalledWith(null, connection);
+  });
+
+  it('converts Sidequest tables left on another engine, and only those', async () => {
+    const query = jest.fn((sql: string) =>
+      Promise.resolve(
+        sql.startsWith('SELECT')
+          ? [
+              { name: 'sidequest_jobs', engine: 'MyISAM' },
+              { name: 'sidequest_queues', engine: 'MyISAM' },
+              { name: 'sidequest_x; DROP TABLE y', engine: 'MyISAM' },
+            ]
+          : [],
+      ),
+    );
+    await expect(ensureSidequestTablesInnoDb({ query } as never)).resolves.toEqual([
+      'sidequest_jobs',
+      'sidequest_queues',
+    ]);
+    expect(query).toHaveBeenCalledWith('ALTER TABLE `sidequest_jobs` ENGINE=InnoDB');
+    expect(query).toHaveBeenCalledWith('ALTER TABLE `sidequest_queues` ENGINE=InnoDB');
+    expect(query.mock.calls.some(([sql]) => sql.includes('DROP TABLE'))).toBe(false);
+  });
+
+  it('does nothing when every Sidequest table is already InnoDB', async () => {
+    const query = jest.fn(() => Promise.resolve([]));
+    await expect(ensureSidequestTablesInnoDb({ query } as never)).resolves.toEqual([]);
+    expect(query).toHaveBeenCalledTimes(1);
   });
 });
