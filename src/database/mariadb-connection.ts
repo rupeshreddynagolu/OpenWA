@@ -65,6 +65,26 @@ export interface MariadbConnectionSettings {
   sslRejectUnauthorized?: boolean;
 }
 
+/**
+ * Connection settings read straight from the environment, for the two migration CLIs (data-source.ts and
+ * data-source-main.ts), which run without ConfigModule. One reader, so both carry the same TLS and timeout settings
+ * as the runtime connections: with DATABASE_SSL=true a migration never connects in plaintext.
+ */
+export function mariadbSettingsFromEnv(env: NodeJS.ProcessEnv = process.env): MariadbConnectionSettings {
+  return {
+    host: env.DATABASE_HOST,
+    port: parseInt(env.DATABASE_PORT || '3306', 10),
+    username: env.DATABASE_USERNAME,
+    password: env.DATABASE_PASSWORD,
+    database: env.DATABASE_NAME || 'openwa',
+    poolSize: parseInt(env.DATABASE_POOL_SIZE || '10', 10),
+    logging: env.DATABASE_LOGGING === 'true',
+    connectTimeoutMs: parseInt(env.DATABASE_CONNECTION_TIMEOUT_MS || '10000', 10),
+    ssl: env.DATABASE_SSL === 'true',
+    sslRejectUnauthorized: env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false',
+  };
+}
+
 /** Connection options shared by the runtime data connection (app.module.ts) and the migration CLI (data-source.ts). */
 export function mariadbConnectionOptions(
   settings: MariadbConnectionSettings,

@@ -3,7 +3,7 @@ import * as path from 'path';
 import { loadCliEnv } from './load-cli-env';
 import { postgresUtcExtra } from './postgres-utc';
 import { postgresSchemaError, sqliteDataMainPathCollision } from '../config/env.validation';
-import { mariadbConnectionOptions, useVarcharUuids } from './mariadb-connection';
+import { mariadbConnectionOptions, mariadbSettingsFromEnv, useVarcharUuids } from './mariadb-connection';
 
 // Load env with the same precedence as the app (process.env > .env > data/.env.generated), so the
 // migration CLI targets the SAME database the dashboard configured — not the default SQLite DB.
@@ -125,18 +125,7 @@ export const mariadbDataMigrations = [sourceGlob('migrations-mariadb', '*{.ts,.j
 
 export function buildMariadbDataSourceOptions(env: NodeJS.ProcessEnv = process.env): DataSourceOptions {
   return {
-    ...mariadbConnectionOptions({
-      host: env.DATABASE_HOST,
-      port: parseInt(env.DATABASE_PORT || '3306', 10),
-      username: env.DATABASE_USERNAME,
-      password: env.DATABASE_PASSWORD,
-      database: env.DATABASE_NAME || 'openwa',
-      poolSize: parseInt(env.DATABASE_POOL_SIZE || '10', 10),
-      logging: env.DATABASE_LOGGING === 'true',
-      connectTimeoutMs: parseInt(env.DATABASE_CONNECTION_TIMEOUT_MS || '10000', 10),
-      ssl: env.DATABASE_SSL === 'true',
-      sslRejectUnauthorized: env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false',
-    }),
+    ...mariadbConnectionOptions(mariadbSettingsFromEnv(env)),
     entities: dataEntities,
     migrations: mariadbDataMigrations,
   };

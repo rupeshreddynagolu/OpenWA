@@ -2,6 +2,7 @@ import {
   MARIADB_SESSION_SQL_MODE_STATEMENT,
   mariadbConnectionOptions,
   mariadbDriver,
+  mariadbSettingsFromEnv,
   useVarcharUuids,
 } from './mariadb-connection';
 
@@ -75,5 +76,27 @@ describe('useVarcharUuids', () => {
     const dataSource = { driver: { uuidColumnTypeSuported: true } };
     useVarcharUuids(dataSource);
     expect(dataSource.driver.uuidColumnTypeSuported).toBe(false);
+  });
+});
+
+describe('mariadbSettingsFromEnv (both migration CLIs)', () => {
+  it('carries DATABASE_SSL into the connection, verifying the server by default', () => {
+    const settings = mariadbSettingsFromEnv({ DATABASE_HOST: 'db', DATABASE_SSL: 'true' });
+    expect(settings).toMatchObject({ host: 'db', port: 3306, ssl: true, sslRejectUnauthorized: true });
+    expect(mariadbConnectionOptions(settings).ssl).toEqual({ rejectUnauthorized: true });
+  });
+
+  it('honours DATABASE_SSL_REJECT_UNAUTHORIZED=false and leaves TLS off when DATABASE_SSL is unset', () => {
+    expect(
+      mariadbSettingsFromEnv({ DATABASE_SSL: 'true', DATABASE_SSL_REJECT_UNAUTHORIZED: 'false' }).sslRejectUnauthorized,
+    ).toBe(false);
+    expect(mariadbConnectionOptions(mariadbSettingsFromEnv({})).ssl).toBeUndefined();
+  });
+
+  it('reads the connect timeout and port like the runtime connection', () => {
+    expect(mariadbSettingsFromEnv({ DATABASE_PORT: '3307', DATABASE_CONNECTION_TIMEOUT_MS: '5000' })).toMatchObject({
+      port: 3307,
+      connectTimeoutMs: 5000,
+    });
   });
 });

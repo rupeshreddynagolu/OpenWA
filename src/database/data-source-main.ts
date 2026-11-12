@@ -1,7 +1,7 @@
 import { DataSource } from 'typeorm';
 import { loadCliEnv } from './load-cli-env';
 import { sqliteDataMainPathCollision } from '../config/env.validation';
-import { mariadbConnectionOptions, useVarcharUuids } from './mariadb-connection';
+import { mariadbConnectionOptions, mariadbSettingsFromEnv, useVarcharUuids } from './mariadb-connection';
 import { MAIN_MARIADB_MIGRATIONS_TABLE } from './main-connection';
 
 // Load environment variables with the app's precedence (mirrors data-source.ts / main.ts).
@@ -46,14 +46,7 @@ class MainMariadbCliDataSource extends DataSource {
 const mainMariadbDataSource =
   process.env.MAIN_DATABASE_TYPE === 'mariadb'
     ? new MainMariadbCliDataSource({
-        ...mariadbConnectionOptions({
-          host: process.env.DATABASE_HOST,
-          port: parseInt(process.env.DATABASE_PORT || '3306', 10),
-          username: process.env.DATABASE_USERNAME,
-          password: process.env.DATABASE_PASSWORD,
-          database: process.env.DATABASE_NAME || 'openwa',
-          logging: process.env.DATABASE_LOGGING === 'true',
-        }),
+        ...mariadbConnectionOptions(mariadbSettingsFromEnv()),
         entities: mainEntities,
         migrations: [__dirname + '/migrations-main-mariadb/*{.ts,.js}'],
         migrationsTableName: MAIN_MARIADB_MIGRATIONS_TABLE,
