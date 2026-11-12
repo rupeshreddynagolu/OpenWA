@@ -50,7 +50,11 @@ export class SqlitePermissionsBoot implements OnApplicationBootstrap {
   constructor(private readonly config: ConfigService) {}
 
   onApplicationBootstrap(): void {
-    const paths: string[] = [this.config.get<string>('database.database', './data/main.sqlite')];
+    const paths: string[] = [];
+    // Fork: with MAIN_DATABASE_TYPE=mariadb there is no main SQLite file to protect.
+    if (this.config.get<string>('database.type', 'sqlite') !== 'mariadb') {
+      paths.push(this.config.get<string>('database.database', './data/main.sqlite'));
+    }
     const dataType = this.config.get<string>('dataDatabase.type', 'sqlite');
     if (dataType !== 'postgres' && dataType !== 'mariadb') {
       paths.push(this.config.get<string>('dataDatabase.database', './data/openwa.sqlite'));

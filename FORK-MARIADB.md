@@ -1,19 +1,23 @@
 # Fork notes: MariaDB + Sidequest (no Redis)
 
 This fork adds MariaDB as a third data database and Sidequest as a Redis-free durable queue. The main database
-(API keys, audit, settings) stays SQLite.
+(API keys, audit) stays a SQLite file by default; `MAIN_DATABASE_TYPE=mariadb` moves it into the same MariaDB database, so
+a host whose glibc is too old for the SQLite driver's prebuilt binary (shared cPanel servers) needs no native driver.
 
 ## Configuration
 
-| Variable                                                                                        | Value                                             |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `DATABASE_TYPE`                                                                                 | `mariadb`                                         |
-| `DATABASE_HOST` / `DATABASE_PORT` / `DATABASE_USERNAME` / `DATABASE_PASSWORD` / `DATABASE_NAME` | connection (port defaults to 3306)                |
-| `QUEUE_ENABLED`                                                                                 | `true`                                            |
-| `QUEUE_DRIVER`                                                                                  | `sidequest` (default `bullmq`, which needs Redis) |
-| `REDIS_ENABLED`                                                                                 | `false`                                           |
+| Variable                                                                                        | Value                                                                                |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `DATABASE_TYPE`                                                                                 | `mariadb`                                                                            |
+| `DATABASE_HOST` / `DATABASE_PORT` / `DATABASE_USERNAME` / `DATABASE_PASSWORD` / `DATABASE_NAME` | connection (port defaults to 3306)                                                   |
+| `QUEUE_ENABLED`                                                                                 | `true`                                                                               |
+| `QUEUE_DRIVER`                                                                                  | `sidequest` (default `bullmq`, which needs Redis)                                    |
+| `MAIN_DATABASE_TYPE`                                                                            | `mariadb` for API-key/audit tables in MariaDB (default `sqlite`: `data/main.sqlite`) |
+| `REDIS_ENABLED`                                                                                 | `false`                                                                              |
 
-`QUEUE_DRIVER=sidequest` requires `DATABASE_TYPE=mariadb`; `DATABASE_SYNCHRONIZE=true` is refused on MariaDB.
+`QUEUE_DRIVER=sidequest` and `MAIN_DATABASE_TYPE=mariadb` require `DATABASE_TYPE=mariadb`; `DATABASE_SYNCHRONIZE=true`
+and `MAIN_DATABASE_SYNCHRONIZE=true` are refused on MariaDB. The main chain lives in `src/database/migrations-main-mariadb/`
+(ledger table `migrations_main`); every upstream `migrations-main` migration needs a counterpart there.
 
 ## How it works
 

@@ -1,6 +1,7 @@
 import { join } from 'path';
 import type { ConfigService } from '@nestjs/config';
 import { DataSource, MigrationExecutor, type DataSourceOptions } from 'typeorm';
+import { mariadbConnectionOptions, useVarcharUuids } from './mariadb-connection';
 
 /**
  * Raised when main.sqlite does not match this release: its migrations ledger records a migration this
@@ -24,6 +25,9 @@ export class MainSchemaMismatchError extends Error {
  */
 export const SQLITE_BUSY_TIMEOUT_MS = 30_000;
 
+/** Ledger table of the main chain on MariaDB, apart from the data chain's `migrations` in the same database. */
+export const MAIN_MARIADB_MIGRATIONS_TABLE = 'migrations_main';
+
 /** Retrying cannot fix a schema mismatch, so it fails the boot at once instead of nine times. */
 export const retryMainConnection = (err: unknown): boolean => !(err instanceof MainSchemaMismatchError);
 
@@ -39,6 +43,34 @@ export const retryMainConnection = (err: unknown): boolean => !(err instanceof M
 export function mainConnectionOptions(
   configService: ConfigService,
 ): DataSourceOptions & { name: string; toRetry: (err: unknown) => boolean } {
+  if (configService.get<string>('database.type', 'sqlite') === 'mariadb') {
+    // Fork addition (MAIN_DATABASE_TYPE=mariadb): the auth/audit tables live in the MariaDB data database, through
+    // the same DATABASE_* connection, with their own migration chain and ledger table so the two never mix.
+    return {
+      ...mariadbConnectionOptions({
+        host: configService.get<string>('dataDatabase.host'),
+        port: configService.get<number>('dataDatabase.port'),
+        username: configService.get<string>('dataDatabase.username'),
+        password: configService.get<string>('dataDatabase.password'),
+        database: configService.get<string>('dataDatabase.name', 'openwa'),
+        // The auth/audit tables see a handful of queries; a small pool leaves the data connection the rest.
+        poolSize: 3,
+        logging: configService.get<boolean>('database.logging', false),
+        connectTimeoutMs: configService.get<number>('dataDatabase.connectionTimeoutMs', 10000),
+        ssl: configService.get<boolean>('dataDatabase.ssl', false),
+        sslRejectUnauthorized: configService.get<boolean>('dataDatabase.sslRejectUnauthorized', true),
+      }),
+      name: 'main',
+      entities: [
+        join(__dirname, '..', 'modules/auth/**/*.entity{.ts,.js}'),
+        join(__dirname, '..', 'modules/audit/**/*.entity{.ts,.js}'),
+      ],
+      migrations: [join(__dirname, 'migrations-main-mariadb/*{.ts,.js}')],
+      migrationsTableName: MAIN_MARIADB_MIGRATIONS_TABLE,
+      synchronize: false,
+      toRetry: retryMainConnection,
+    };
+  }
   return {
     // Nest's TypeOrmCoreModule resolves the DataSource to close at shutdown from these options.
     name: 'main',
@@ -74,6 +106,9 @@ export async function createMainDataSource(options?: DataSourceOptions): Promise
   const opts = options as DataSourceOptions;
   const ds = new DataSource({ ...opts, synchronize: false, migrationsRun: false });
   await ds.initialize();
+  const mariadb = opts.type === 'mariadb';
+  // Same id typing as the MariaDB data connection: uuid ids stay varchar (see useVarcharUuids).
+  if (mariadb) useVarcharUuids(ds);
   try {
     const shipped = new Set(ds.migrations.map(m => m.name));
     const unknown = (await new MigrationExecutor(ds).getExecutedMigrations())
@@ -91,7 +126,12 @@ export async function createMainDataSource(options?: DataSourceOptions): Promise
 
     const missing: string[] = [];
     for (const metadata of ds.entityMetadatas) {
-      const rows = await ds.query<Array<{ name: string }>>(`PRAGMA table_info("${metadata.tableName}")`);
+      const rows = mariadb
+        ? await ds.query<Array<{ name: string }>>(
+            'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+            [metadata.tableName],
+          )
+        : await ds.query<Array<{ name: string }>>(`PRAGMA table_info("${metadata.tableName}")`);
       const present = new Set(rows.map(r => r.name));
       for (const column of metadata.columns) {
         if (!present.has(column.databaseName)) missing.push(`${metadata.tableName}.${column.databaseName}`);

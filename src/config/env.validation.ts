@@ -175,6 +175,22 @@ export function validateEnv(config: EnvConfig): EnvConfig {
     errors.push('QUEUE_DRIVER=sidequest stores its jobs in MariaDB and needs DATABASE_TYPE=mariadb');
   }
 
+  // MAIN_DATABASE_TYPE (fork addition): where the auth/audit tables live. 'sqlite' (default) is data/main.sqlite;
+  // 'mariadb' puts them in the MariaDB data database, through the same DATABASE_* connection, so it needs
+  // DATABASE_TYPE=mariadb.
+  const mainDbType = rawEnum('MAIN_DATABASE_TYPE');
+  if (mainDbType !== undefined && mainDbType !== 'sqlite' && mainDbType !== 'mariadb') {
+    errors.push(`MAIN_DATABASE_TYPE must be "sqlite" or "mariadb" (got ${JSON.stringify(mainDbType)})`);
+  }
+  if (mainDbType === 'mariadb' && dbType !== 'mariadb') {
+    errors.push('MAIN_DATABASE_TYPE=mariadb uses the MariaDB data database and needs DATABASE_TYPE=mariadb');
+  }
+  if (mainDbType === 'mariadb' && config['MAIN_DATABASE_SYNCHRONIZE'] === 'true') {
+    errors.push(
+      'MAIN_DATABASE_SYNCHRONIZE=true is not allowed with MAIN_DATABASE_TYPE=mariadb: its migrations manage the schema.',
+    );
+  }
+
   // Whitelist the registered engine/storage ids so a typo fails fast at boot: an unknown ENGINE_TYPE
   // would otherwise fail every session start, and an unknown STORAGE_TYPE would silently fall back to
   // local. Values must match the ids registered in engine.factory / configuration.

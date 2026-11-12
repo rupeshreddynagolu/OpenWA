@@ -80,7 +80,8 @@ DATABASE_PASSWORD=the-password-from-step-3
 CORS_ORIGINS=https://openwa.example.com
 ```
 
-Everything else in `.env.example` is already set for cPanel: MariaDB, the Sidequest queue, no Redis, the Baileys
+Everything else in `.env.example` is already set for cPanel: MariaDB for both the data and the API-key/audit tables
+(`MAIN_DATABASE_TYPE=mariadb`, so no native SQLite driver is needed), the Sidequest queue, no Redis, the Baileys
 engine, production mode, trusted local proxy. Then set the file's **Permissions** to `600`, because it holds the
 database password. Variables entered in the _Setup Node.js App_ screen override the file, if you prefer that.
 
@@ -172,18 +173,19 @@ Restoring both brings a session back without re-linking.
 
 ## 12. Troubleshooting
 
-| Symptom                                                               | Likely cause and fix                                                                                                                  |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| _Setup Node.js App_ shows an error, or the site answers 503           | Read `stderr.log` in the application root (or the log path cPanel shows). Most start-up errors name the setting at fault.             |
-| `Invalid environment configuration: …`                                | A value in `.env` is missing or misspelt; the message lists each one.                                                                 |
-| `Access denied for user` / `ER_DBACCESS_DENIED_ERROR`                 | Use the **prefixed** names (`myacct_…`) and check the user has ALL PRIVILEGES on the database (step 3).                               |
-| npm install is killed or times out                                    | Not enough memory for the panel's installer. Use SSH (step 7) or ask the host.                                                        |
-| `Cannot find module '…/nodevenv/openwa/…/lib/scripts/postinstall.js'` | A bundle built before 12 Nov 2026. Use a current bundle, or run `npm install --omit=dev` over SSH from the application root (step 7). |
-| A download of Chromium during install                                 | `.puppeteerrc.cjs` is missing from the application root; it ships in the bundle (hidden files).                                       |
-| The WhatsApp session drops every so often                             | Passenger stopped the idle app. Add the step 8 settings and the cron job.                                                             |
-| WhatsApp keeps logging the session out, or two QR codes appear        | Two app processes are running. Limit Passenger to one instance (step 8a).                                                             |
-| Dashboard page is blank                                               | Open it over **https**. Production mode upgrades the page's requests to https.                                                        |
-| Live updates in the dashboard are slow                                | The host's proxy blocks WebSockets; Socket.IO falls back to polling, which still works.                                               |
+| Symptom                                                               | Likely cause and fix                                                                                                                        |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| _Setup Node.js App_ shows an error, or the site answers 503           | Read `stderr.log` in the application root (or the log path cPanel shows). Most start-up errors name the setting at fault.                   |
+| `Invalid environment configuration: …`                                | A value in `.env` is missing or misspelt; the message lists each one.                                                                       |
+| `Access denied for user` / `ER_DBACCESS_DENIED_ERROR`                 | Use the **prefixed** names (`myacct_…`) and check the user has ALL PRIVILEGES on the database (step 3).                                     |
+| `GLIBC_2.29' not found (required by …better-sqlite3…)` and a 503      | The server's glibc is too old for the SQLite driver. Add `MAIN_DATABASE_TYPE=mariadb` to `.env` (a bundle from 12 Nov 2026 on) and restart. |
+| npm install is killed or times out                                    | Not enough memory for the panel's installer. Use SSH (step 7) or ask the host.                                                              |
+| `Cannot find module '…/nodevenv/openwa/…/lib/scripts/postinstall.js'` | A bundle built before 12 Nov 2026. Use a current bundle, or run `npm install --omit=dev` over SSH from the application root (step 7).       |
+| A download of Chromium during install                                 | `.puppeteerrc.cjs` is missing from the application root; it ships in the bundle (hidden files).                                             |
+| The WhatsApp session drops every so often                             | Passenger stopped the idle app. Add the step 8 settings and the cron job.                                                                   |
+| WhatsApp keeps logging the session out, or two QR codes appear        | Two app processes are running. Limit Passenger to one instance (step 8a).                                                                   |
+| Dashboard page is blank                                               | Open it over **https**. Production mode upgrades the page's requests to https.                                                              |
+| Live updates in the dashboard are slow                                | The host's proxy blocks WebSockets; Socket.IO falls back to polling, which still works.                                                     |
 
 ## Security checklist
 

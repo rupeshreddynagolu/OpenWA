@@ -1,6 +1,8 @@
 import { DataSource } from 'typeorm';
 import { loadCliEnv } from './load-cli-env';
 import { sqliteDataMainPathCollision } from '../config/env.validation';
+import { mariadbConnectionOptions, useVarcharUuids } from './mariadb-connection';
+import { MAIN_MARIADB_MIGRATIONS_TABLE } from './main-connection';
 
 // Load environment variables with the app's precedence (mirrors data-source.ts / main.ts).
 loadCliEnv();
@@ -27,16 +29,52 @@ if (sqlitePathCollision) {
  *
  * Usage: `npm run migration:run:main` (dev) / `migration:run:main:prod` (compiled).
  */
-const mainDataSource = new DataSource({
-  type: 'better-sqlite3',
-  // Mirrors the runtime main path (configuration.ts) — MAIN_DATABASE_NAME overrides the default
-  // ./data/main.sqlite (e.g. e2e points it at a temp file), so the CLI and the app never target
-  // different main databases.
-  database: process.env.MAIN_DATABASE_NAME || './data/main.sqlite',
-  entities: [__dirname + '/../modules/auth/**/*.entity{.ts,.js}', __dirname + '/../modules/audit/**/*.entity{.ts,.js}'],
-  migrations: [__dirname + '/migrations-main/*{.ts,.js}'],
-  synchronize: false,
-  logging: process.env.DATABASE_LOGGING === 'true',
-});
+const mainEntities = [
+  __dirname + '/../modules/auth/**/*.entity{.ts,.js}',
+  __dirname + '/../modules/audit/**/*.entity{.ts,.js}',
+];
+
+/** Fork addition: MAIN_DATABASE_TYPE=mariadb, mirroring the runtime main connection (main-connection.ts). */
+class MainMariadbCliDataSource extends DataSource {
+  override async initialize(): Promise<this> {
+    await super.initialize();
+    useVarcharUuids(this);
+    return this;
+  }
+}
+
+const mainMariadbDataSource =
+  process.env.MAIN_DATABASE_TYPE === 'mariadb'
+    ? new MainMariadbCliDataSource({
+        ...mariadbConnectionOptions({
+          host: process.env.DATABASE_HOST,
+          port: parseInt(process.env.DATABASE_PORT || '3306', 10),
+          username: process.env.DATABASE_USERNAME,
+          password: process.env.DATABASE_PASSWORD,
+          database: process.env.DATABASE_NAME || 'openwa',
+          logging: process.env.DATABASE_LOGGING === 'true',
+        }),
+        entities: mainEntities,
+        migrations: [__dirname + '/migrations-main-mariadb/*{.ts,.js}'],
+        migrationsTableName: MAIN_MARIADB_MIGRATIONS_TABLE,
+      })
+    : undefined;
+
+const mainDataSource =
+  mainMariadbDataSource ??
+  new DataSource({
+    type: 'better-sqlite3',
+    // Mirrors the runtime main path (configuration.ts) — MAIN_DATABASE_NAME overrides the default
+    // ./data/main.sqlite (e.g. e2e points it at a temp file), so the CLI and the app never target
+    // different main databases.
+    database: process.env.MAIN_DATABASE_NAME || './data/main.sqlite',
+    entities: [
+      __dirname + '/../modules/auth/**/*.entity{.ts,.js}',
+      __dirname + '/../modules/audit/**/*.entity{.ts,.js}',
+    ],
+    migrations: [__dirname + '/migrations-main/*{.ts,.js}'],
+    synchronize: false,
+    logging: process.env.DATABASE_LOGGING === 'true',
+  });
 
 export default mainDataSource;

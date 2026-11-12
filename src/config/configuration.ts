@@ -176,7 +176,10 @@ export default () => ({
 
   // Main Database configuration (always SQLite for boot config)
   database: {
-    type: 'sqlite' as const,
+    // Fork addition: MAIN_DATABASE_TYPE=mariadb keeps the auth/audit tables in the MariaDB data database (same
+    // DATABASE_* connection) instead of a SQLite file, so a host that cannot load better-sqlite3's native binary (an
+    // older glibc, as on shared cPanel servers) needs no native database driver. Default 'sqlite'.
+    type: process.env.MAIN_DATABASE_TYPE === 'mariadb' ? 'mariadb' : 'sqlite',
     // SQLite file for the auth/audit DB. Overridable (e.g. e2e points it at a temp file) so tests
     // never write api keys into the developer's ./data/main.sqlite.
     database: process.env.MAIN_DATABASE_NAME || './data/main.sqlite',
